@@ -33,7 +33,7 @@
             box-shadow: 0 0 30px rgba(0, 255, 136, 0.3);
         }
         #mainCanvas { display: block; width: 100%; height: 500px; cursor: pointer; }
-        .controls { display: flex; justify-content: center; gap: 15px; margin: 20px 0; flex-wrap: wrap; }
+        .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin: 20px 0; flex-wrap: wrap; }
         .btn {
             background: linear-gradient(45deg, #00ff88, #00ccff);
             color: #000;
@@ -58,6 +58,25 @@
         @keyframes pulse {
             0%, 100% { box-shadow: 0 0 5px rgba(255, 68, 68, 0.5); }
             50% { box-shadow: 0 0 25px rgba(255, 68, 68, 0.8); }
+        }
+        .timer-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid #00ff88;
+            padding: 8px 15px;
+            border-radius: 25px;
+        }
+        .timer-control label { font-size: 0.9rem; }
+        .timer-control input {
+            background: #333;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+            border-radius: 5px;
+            width: 60px;
+            text-align: center;
+            font-family: 'Courier New', monospace;
         }
         .sound-controls {
             display: grid;
@@ -114,16 +133,25 @@
         <div class="controls">
             <button class="btn" id="startBtn">Start Analysis</button>
             <button class="btn" id="stopAudioBtn">Stop All Audio</button>
+            <div class="timer-control">
+                <label for="timerInput">Loop Duration (s):</label>
+                <input type="number" id="timerInput" min="0" placeholder="∞">
+            </div>
         </div>
         <div class="sound-controls">
             <div class="sound-btn" data-sound="white">⚪ White Noise</div>
-            <div class="sound-btn" data-sound="brown">🤎 Brown Noise</div>
             <div class="sound-btn" data-sound="rain">🌧️ Rain</div>
             <div class="sound-btn" data-sound="ocean">🌊 Ocean</div>
             <div class="sound-btn" data-sound="forest">🌲 Forest</div>
             <div class="sound-btn" data-sound="cafe">☕ Cafe</div>
         </div>
     </div>
+
+    <audio id="audio-white" src="white.mp3" loop></audio>
+    <audio id="audio-rain" src="rain.mp3" loop></audio>
+    <audio id="audio-ocean" src="ocean.mp3" loop></audio>
+    <audio id="audio-forest" src="forest.mp3" loop></audio>
+    <audio id="audio-cafe" src="cafe.mp3" loop></audio>
 
     <script>
         class SoundMaskAI {
@@ -134,13 +162,12 @@
                 this.audioContext = null;
                 this.analyser = null;
                 this.audioBuffer = null;
-                this.generationContext = null;
-                this.activeSource = null;
                 this.nn = {};
                 this.animationId = null;
                 this.spectrogramData = [];
                 this.predictions = [0.25, 0.25, 0.25, 0.25];
                 this.recommendations = [];
+                this.activeTimer = null;
                 this.init();
             }
 
@@ -176,7 +203,6 @@
                     this.nn.cnn = new SimpleCNN(32, 32);
                     this.nn.rnn = new SimpleRNN(64, 16);
                     this.nn.transformer = new SimpleTransformer(64, 4, 16);
-                    this.nn.vae = new SimpleVAE(32, 2);
                     this.log('Neural networks built successfully.');
                     document.getElementById('status').textContent = '🧠 Neural networks ready. Requesting microphone...';
                 } catch (error) {
@@ -332,13 +358,10 @@
                     const y = area.y + i * (barHeight + 8);
                     const confidence = this.predictions[i];
                     const barWidth = confidence * (area.w - 90);
-                    // Background bar
                     this.ctx.fillStyle = '#333';
                     this.ctx.fillRect(area.x + 70, y, area.w - 90, barHeight);
-                    // Confidence bar
                     this.ctx.fillStyle = colors[i];
                     this.ctx.fillRect(area.x + 70, y, barWidth, barHeight);
-                    // Label and percentage
                     this.drawText(labels[i], area.x, y + barHeight / 2 + 4, '#00ff88', '11px');
                     this.drawText(Math.round(confidence * 100) + '%', area.x + area.w - 15, y + barHeight / 2 + 4, '#00ff88', '11px');
                 }
@@ -370,8 +393,10 @@
 
             updateRecommendations() {
                 const recs = [
-                    ['brown', 'white', 'ocean'], ['white', 'cafe', 'rain'],
-                    ['brown', 'ocean', 'forest'], ['forest', 'rain', 'cafe']
+                    ['white', 'ocean', 'forest'], // Replaced 'brown' with 'forest'
+                    ['white', 'cafe', 'rain'],
+                    ['rain', 'ocean', 'forest'],   // Replaced 'brown' with 'rain'
+                    ['forest', 'rain', 'cafe']
                 ];
                 const dominant = this.predictions.indexOf(Math.max(...this.predictions));
                 this.recommendations = recs[dominant];
@@ -385,46 +410,47 @@
 
             generateSound(type) {
                 this.stopAllAudio();
-                document.querySelectorAll('.sound-btn').forEach(btn => btn.classList.remove('playing'));
-                document.querySelector(`[data-sound="${type}"]`).classList.add('playing');
 
-                this.generationContext = new (window.AudioContext || window.webkitAudioContext)();
-                const sampleRate = this.generationContext.sampleRate;
-                const duration = 3;
-                const bufferSize = sampleRate * duration;
+                const audio = document.getElementById(`audio-${type}`);
+                const soundButton = document.querySelector(`[data-sound="${type}"]`);
 
-                const buffer = this.generationContext.createBuffer(1, bufferSize, sampleRate);
-                const data = buffer.getChannelData(0);
+                if (audio) {
+                    audio.play();
+                    soundButton.classList.add('playing');
+                    this.log(`Playing ${type} sound from file.`);
 
-                // Use VAE to generate the audio data
-                const vaeOutput = this.nn.vae.generate(type);
-                for (let i = 0; i < bufferSize; i++) {
-                    data[i] = vaeOutput[i % vaeOutput.length];
+                    const durationInput = document.getElementById('timerInput');
+                    const duration = parseFloat(durationInput.value);
+
+                    if (duration > 0) {
+                        this.log(`Sound will stop in ${duration} seconds.`);
+                        this.activeTimer = setTimeout(() => {
+                            this.log(`${type} sound timer ended.`);
+                            audio.pause();
+                            audio.currentTime = 0;
+                            soundButton.classList.remove('playing');
+                            this.activeTimer = null;
+                        }, duration * 1000);
+                    }
+                } else {
+                    this.log(`Audio file for ${type} not found.`);
                 }
-
-                const gainNode = this.generationContext.createGain();
-                gainNode.gain.setValueAtTime(0.3, this.generationContext.currentTime);
-                gainNode.connect(this.generationContext.destination);
-
-                this.activeSource = this.generationContext.createBufferSource();
-                this.activeSource.buffer = buffer;
-                this.activeSource.loop = true;
-                this.activeSource.connect(gainNode);
-                this.activeSource.start();
-
-                this.log(`Generating ${type} sound with VAE.`);
             }
 
             stopAllAudio() {
-                if (this.activeSource) {
-                    this.activeSource.stop();
-                    this.activeSource = null;
+                if (this.activeTimer) {
+                    clearTimeout(this.activeTimer);
+                    this.activeTimer = null;
+                    this.log('Active sound timer cancelled.');
                 }
-                if (this.generationContext) {
-                    this.generationContext.close().catch(e => this.log("Error closing context: " + e));
-                    this.generationContext = null;
-                }
-                document.querySelectorAll('.sound-btn').forEach(btn => btn.classList.remove('playing'));
+
+                document.querySelectorAll('audio').forEach(audio => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                });
+                document.querySelectorAll('.sound-btn').forEach(btn => {
+                    btn.classList.remove('playing');
+                });
                 this.log('All audio stopped.');
             }
 
@@ -464,56 +490,43 @@
             log(message) { console.log(`[${new Date().toLocaleTimeString()}] SoundMask AI: ${message}`); }
         }
 
-        // --- Functional Neural Network Classes ---
-
         class SimpleCNN {
             constructor(inputW, inputH) {
-                this.kernel = [-1, 2, -1]; // Simple edge-detection like kernel
+                this.kernel = [-1, 2, -1];
                 this.inputW = inputW;
                 this.inputH = inputH;
             }
-
             predict(spectrogram) {
-                // 1. Convolution
                 let convolved = [];
                 for (let r = 0; r < this.inputH; r++) {
                     let row = [];
                     for (let c = 1; c < this.inputW - 1; c++) {
-                        let sum = spectrogram[r][c-1] * this.kernel[0] +
-                                  spectrogram[r][c]   * this.kernel[1] +
-                                  spectrogram[r][c+1] * this.kernel[2];
-                        row.push(Math.tanh(sum)); // Activation function
+                        let sum = spectrogram[r][c-1] * this.kernel[0] + spectrogram[r][c] * this.kernel[1] + spectrogram[r][c+1] * this.kernel[2];
+                        row.push(Math.tanh(sum));
                     }
                     convolved.push(row);
                 }
-
-                // 2. Max Pooling
                 let pooled = [];
                 for (let r = 0; r < convolved.length; r++) {
                     for (let c = 0; c < convolved[r].length - 1; c += 2) {
                         pooled.push(Math.max(convolved[r][c], convolved[r][c+1]));
                     }
                 }
-
-                // 3. Flatten and Dense layer
                 const sum = pooled.reduce((a, b) => a + Math.abs(b), 0);
                 const avg = sum / (pooled.length || 1);
-                return [avg * 1.5, avg * 0.8, avg * 0.5, avg * 1.1]; // Return 4 prediction values
+                return [avg * 1.5, avg * 0.8, avg * 0.5, avg * 1.1];
             }
         }
 
         class SimpleRNN {
             constructor(inputSize, hiddenSize) {
                 this.hiddenSize = hiddenSize;
-                this.wh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5); // Input-to-hidden weights
-                this.hh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5); // Hidden-to-hidden weights
+                this.wh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5);
+                this.hh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5);
                 this.hidden = Array.from({ length: hiddenSize }, () => 0);
             }
-
             predict(sequence) {
-                // Reset hidden state for new sequence
                 this.hidden.fill(0);
-
                 for (const input of sequence) {
                     const newHidden = Array(this.hiddenSize).fill(0);
                     for (let i = 0; i < this.hiddenSize; i++) {
@@ -521,12 +534,8 @@
                     }
                     this.hidden = newHidden;
                 }
-
                 const sum = this.hidden.reduce((a, b) => a + b, 0);
-                return [
-                    Math.abs(sum * 0.1), Math.abs(sum * 0.15),
-                    Math.abs(sum * 0.05), Math.abs(sum * 0.12)
-                ];
+                return [ Math.abs(sum * 0.1), Math.abs(sum * 0.15), Math.abs(sum * 0.05), Math.abs(sum * 0.12) ];
             }
         }
 
@@ -539,99 +548,30 @@
                 this.Wk = Array.from({length: numHeads}, () => Array.from({length: headSize}, () => Math.random() - 0.5));
                 this.Wv = Array.from({length: numHeads}, () => Array.from({length: headSize}, () => Math.random() - 0.5));
             }
-
             predict(sequence) {
-                // 1. Positional Encoding (simplified)
                 let embedded = sequence.map((val, i) => val + Math.sin(i / 10));
-
-                // 2. Simplified Self-Attention
                 let attendedOutputs = [];
                 for(let h = 0; h < this.numHeads; h++) {
                     let q = embedded.map(val => val * this.Wq[h][0]);
                     let k = embedded.map(val => val * this.Wk[h][0]);
                     let v = embedded.map(val => val * this.Wv[h][0]);
-
                     let attentionScores = q.map((qi, i) => k.map((kj, j) => qi * kj));
                     let attentionWeights = attentionScores.map(row => this.softmax(row));
-
                     let headOutput = attentionWeights.map((weights, i) => {
                         return v.reduce((sum, vj, j) => sum + vj * weights[j], 0);
                     });
                     attendedOutputs.push(...headOutput);
                 }
-
-                // 3. Aggregate results
                 const sum = attendedOutputs.reduce((a, b) => a + Math.abs(b), 0);
                 const avg = sum / (attendedOutputs.length || 1);
-
                 return [avg * 1.1, avg * 1.3, avg * 0.9, avg * 0.7];
             }
-
             softmax(arr) {
                 if (!arr || arr.length === 0) return [];
                 const max = Math.max(...arr);
                 const exp = arr.map(x => Math.exp(x - max));
                 const sum = exp.reduce((a, b) => a + b, 0);
                 return exp.map(x => x / (sum || 1));
-            }
-        }
-
-        class SimpleVAE {
-            constructor(latentDim, klDivergence) {
-                this.latentDim = latentDim;
-                this.klDivergence = klDivergence;
-                this.decoderWeights = Array.from({ length: latentDim }, () => Math.random() - 0.5);
-            }
-
-            generate(type) {
-                // Create a latent vector based on the sound type
-                let latentVector = [];
-                const typeModifier = this.getTypeModifier(type);
-                for (let i = 0; i < this.latentDim; i++) {
-                    latentVector.push((Math.random() - 0.5) * this.klDivergence * typeModifier);
-                }
-
-                // Decode the latent vector into an audio signal
-                const outputSize = 44100 * 2; // 2 seconds of audio
-                let audioSignal = new Float32Array(outputSize);
-                for (let i = 0; i < outputSize; i++) {
-                    let value = 0;
-                    for (let j = 0; j < this.latentDim; j++) {
-                        // Simple decoding: mix sine waves based on latent vector
-                        const freq = (j + 1) * 50 * typeModifier;
-                        value += latentVector[j] * Math.sin(2 * Math.PI * i / 44100 * freq);
-                    }
-                    audioSignal[i] = value * 0.5; // Scale down
-                }
-
-                // Add some noise for texture
-                return this.addNoise(audioSignal, type);
-            }
-
-            addNoise(signal, type) {
-                const noiseLevels = { white: 0.3, brown: 0.5, rain: 0.1, ocean: 0.2, forest: 0.05, cafe: 0.15 };
-                const noiseLevel = noiseLevels[type] || 0.1;
-                let brownNoise = 0;
-                for(let i=0; i<signal.length; i++) {
-                    const white = Math.random() * 2 - 1;
-                    if (type === 'brown') {
-                        brownNoise = (brownNoise + (0.02 * white)) / 1.02;
-                        signal[i] += brownNoise * noiseLevel;
-                    } else {
-                        signal[i] += white * noiseLevel;
-                    }
-                    // Clamp values
-                    signal[i] = Math.max(-1, Math.min(1, signal[i]));
-                }
-                return signal;
-            }
-
-            getTypeModifier(type) {
-                const modifiers = {
-                    white: 1.0, brown: 0.4, rain: 1.5,
-                    ocean: 0.8, forest: 2.0, cafe: 1.2
-                };
-                return modifiers[type] || 1.0;
             }
         }
 
