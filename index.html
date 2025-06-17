@@ -57,7 +57,11 @@
             text-transform: uppercase;
             letter-spacing: 1px;
         }
-        .btn:hover {
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn:hover:enabled {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0, 255, 136, 0.5);
         }
@@ -122,13 +126,13 @@
     <div class="container">
         <div class="header">
             <h1>🎧 SoundMask AI</h1>
-            <p>Minimal Audio Classifier (YAMNet powered)</p>
+            <p>Basic Audio Classifier (YAMNet powered)</p>
         </div>
         <div class="status" id="status">Loading YAMNet model...</div>
         <div class="result" id="result"></div>
         <div class="recommend" id="recommend"></div>
         <div class="controls">
-            <button class="btn" id="startBtn">Start Analysis</button>
+            <button class="btn" id="startBtn" disabled>Start Analysis</button>
             <button class="btn" id="stopAudioBtn">Stop All Audio</button>
             <div class="timer-control">
                 <label for="timerInput">Loop Duration (s):</label>
@@ -158,8 +162,14 @@
 
     async function loadYamnet() {
         document.getElementById('status').textContent = 'Loading YAMNet model...';
-        yamnetModel = await yamnet.load();
-        document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
+        try {
+            yamnetModel = await yamnet.load();
+            document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
+            document.getElementById('startBtn').disabled = false;
+        } catch (e) {
+            document.getElementById('status').textContent = '❌ Failed to load YAMNet. Please check your internet connection and reload.';
+            document.getElementById('startBtn').disabled = true;
+        }
     }
 
     async function startYamnetClassification() {
