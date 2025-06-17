@@ -147,7 +147,8 @@
         </div>
     </div>
 
-    <audio id="audio-white" src="white.mp3" loop></audio>
+    <!-- Updated audio file references to .wav files -->
+    <audio id="audio-whitenoise" src="whitenoise.mp3" loop></audio>
     <audio id="audio-rain" src="rain.mp3" loop></audio>
     <audio id="audio-ocean" src="ocean.mp3" loop></audio>
     <audio id="audio-forest" src="forest.mp3" loop></audio>
@@ -173,8 +174,11 @@
 
             async init() {
                 this.log('Initializing SoundMask AI...');
-                this.setupCanvas();
-                this.setupEventListeners();
+                // Wait for DOM to be fully rendered for correct canvas sizing
+                setTimeout(() => {
+                    this.setupCanvas();
+                    this.setupEventListeners();
+                }, 50);
                 this.buildNeuralNetworks();
                 this.startAnimation();
                 setTimeout(() => this.requestMicrophone(), 500);
@@ -182,11 +186,15 @@
 
             setupCanvas() {
                 const rect = this.canvas.getBoundingClientRect();
-                this.canvas.width = rect.width * window.devicePixelRatio;
-                this.canvas.height = rect.height * window.devicePixelRatio;
+                // Fallback for 0 width/height
+                const width = rect.width || 800;
+                const height = rect.height || 500;
+                this.canvas.width = width * window.devicePixelRatio;
+                this.canvas.height = height * window.devicePixelRatio;
+                this.ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform before scaling
                 this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-                this.width = rect.width;
-                this.height = rect.height;
+                this.width = width;
+                this.height = height;
             }
 
             setupEventListeners() {
@@ -194,6 +202,7 @@
                 document.getElementById('stopAudioBtn').onclick = () => this.stopAllAudio();
                 document.querySelectorAll('.sound-btn').forEach(btn => {
                     btn.onclick = () => this.generateSound(btn.dataset.sound);
+                    btn.ontouchstart = () => this.generateSound(btn.dataset.sound);
                 });
                 window.addEventListener('resize', () => this.setupCanvas());
             }
@@ -231,6 +240,10 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    // Resume context if suspended
+                    if (this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
                     const source = this.audioContext.createMediaStreamSource(stream);
                     this.analyser = this.audioContext.createAnalyser();
                     this.analyser.fftSize = 512;
@@ -393,9 +406,9 @@
 
             updateRecommendations() {
                 const recs = [
-                    ['white', 'ocean', 'forest'], // Replaced 'brown' with 'forest'
+                    ['white', 'ocean', 'forest'],
                     ['white', 'cafe', 'rain'],
-                    ['rain', 'ocean', 'forest'],   // Replaced 'brown' with 'rain'
+                    ['rain', 'ocean', 'forest'],
                     ['forest', 'rain', 'cafe']
                 ];
                 const dominant = this.predictions.indexOf(Math.max(...this.predictions));
@@ -410,19 +423,22 @@
 
             generateSound(type) {
                 this.stopAllAudio();
-
-                const audio = document.getElementById(`audio-${type}`);
-                const soundButton = document.querySelector(`[data-sound="${type}"]`);
-
+                // Map 'white' to 'whitenoise' for the new file name
+                const audioId = type === 'white' ? 'whitenoise' : type;
+                const audio = document.getElementById(`audio-${audioId}`);
+                const soundButton = document.querySelector(`[data-sound=\"${type}\"]`);
                 if (audio) {
-                    audio.play();
+                    const playPromise = audio.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(e => {
+                            this.log(`Audio play failed: ${e.message}`);
+                        });
+                    }
                     soundButton.classList.add('playing');
                     this.log(`Playing ${type} sound from file.`);
-
                     const durationInput = document.getElementById('timerInput');
                     const duration = parseFloat(durationInput.value);
-
-                    if (duration > 0) {
+                    if (!isNaN(duration) && duration > 0) {
                         this.log(`Sound will stop in ${duration} seconds.`);
                         this.activeTimer = setTimeout(() => {
                             this.log(`${type} sound timer ended.`);
@@ -443,7 +459,6 @@
                     this.activeTimer = null;
                     this.log('Active sound timer cancelled.');
                 }
-
                 document.querySelectorAll('audio').forEach(audio => {
                     audio.pause();
                     audio.currentTime = 0;
@@ -490,6 +505,7 @@
             log(message) { console.log(`[${new Date().toLocaleTimeString()}] SoundMask AI: ${message}`); }
         }
 
+        // --- Simple neural network stubs (unchanged) ---
         class SimpleCNN {
             constructor(inputW, inputH) {
                 this.kernel = [-1, 2, -1];
