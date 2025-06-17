@@ -3,20 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SoundMask AI - Canvas Version</title>
+    <title>SoundMask AI</title>
     <style>
         body {
-            font-family: 'Courier New', monospace;
+            font-family: 'Segoe UI', 'Courier New', monospace;
             background: #0a0a0a;
             color: #00ff88;
             margin: 0;
             padding: 20px;
-            overflow-x: hidden;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 500px; margin: 0 auto; }
         .header { text-align: center; margin-bottom: 20px; }
         .header h1 {
-            font-size: 2.5rem;
+            font-size: 2.2rem;
             margin: 0;
             text-shadow: 0 0 20px #00ff88;
             background: linear-gradient(45deg, #00ff88, #00ccff);
@@ -24,15 +23,24 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        .canvas-container {
-            position: relative;
-            border: 2px solid #00ff88;
-            border-radius: 10px;
-            background: #111;
-            overflow: hidden;
-            box-shadow: 0 0 30px rgba(0, 255, 136, 0.3);
+        .status, .result, .recommend {
+            text-align: center;
+            margin: 15px 0;
         }
-        #mainCanvas { display: block; width: 100%; height: 500px; cursor: pointer; }
+        .status {
+            padding: 12px;
+            background: rgba(0, 255, 136, 0.08);
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            font-size: 1.1rem;
+        }
+        .result {
+            font-size: 1.3rem;
+        }
+        .recommend {
+            font-size: 1.1rem;
+            color: #ffaa00;
+        }
         .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin: 20px 0; flex-wrap: wrap; }
         .btn {
             background: linear-gradient(45deg, #00ff88, #00ccff);
@@ -106,36 +114,23 @@
             background: rgba(255, 68, 68, 0.2);
             color: #ff4444;
         }
-        .status {
-            text-align: center;
-            padding: 15px;
-            background: rgba(0, 255, 136, 0.1);
-            border: 1px solid #00ff88;
-            border-radius: 8px;
-            margin: 20px 0;
-            font-size: 1.1rem;
-        }
-        @media (max-width: 768px) {
-            .controls { flex-direction: column; align-items: center; }
-            .sound-controls { grid-template-columns: repeat(3, 1fr); }
-            #mainCanvas { height: 400px; }
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🎧 SoundMask AI</h1>
-            <p>Real-time Neural Audio Analysis & Masking</p>
+            <p>Audio Classifier</p>
         </div>
         <div class="status" id="status">Initializing neural networks...</div>
-        <div class="canvas-container"><canvas id="mainCanvas"></canvas></div>
+        <div class="result" id="result"></div>
+        <div class="recommend" id="recommend"></div>
         <div class="controls">
             <button class="btn" id="startBtn">Start Analysis</button>
             <button class="btn" id="stopAudioBtn">Stop All Audio</button>
             <div class="timer-control">
                 <label for="timerInput">Loop Duration (s):</label>
-                <input type="number" id="timerInput" min="0" placeholder="∞">
+                <input type="number" id="timerInput" min="0" value="3600" placeholder="∞">
             </div>
         </div>
         <div class="sound-controls">
@@ -147,25 +142,20 @@
         </div>
     </div>
 
-    <!-- Updated audio file references to .wav files -->
-    <audio id="audio-whitenoise" src="whitenoise.mp3" loop></audio>
-    <audio id="audio-rain" src="rain.mp3" loop></audio>
-    <audio id="audio-ocean" src="ocean.mp3" loop></audio>
-    <audio id="audio-forest" src="forest.mp3" loop></audio>
-    <audio id="audio-cafe" src="cafe.mp3" loop></audio>
+    <audio id="audio-whitenoise" src="whitenoise.wav" loop></audio>
+    <audio id="audio-rain" src="rain.wav" loop></audio>
+    <audio id="audio-ocean" src="ocean.wav" loop></audio>
+    <audio id="audio-forest" src="forest.wav" loop></audio>
+    <audio id="audio-cafe" src="cafe.wav" loop></audio>
 
     <script>
         class SoundMaskAI {
             constructor() {
-                this.canvas = document.getElementById('mainCanvas');
-                this.ctx = this.canvas.getContext('2d');
                 this.isRecording = false;
                 this.audioContext = null;
                 this.analyser = null;
                 this.audioBuffer = null;
                 this.nn = {};
-                this.animationId = null;
-                this.spectrogramData = [];
                 this.predictions = [0.25, 0.25, 0.25, 0.25];
                 this.recommendations = [];
                 this.activeTimer = null;
@@ -173,28 +163,9 @@
             }
 
             async init() {
-                this.log('Initializing SoundMask AI...');
-                // Wait for DOM to be fully rendered for correct canvas sizing
-                setTimeout(() => {
-                    this.setupCanvas();
-                    this.setupEventListeners();
-                }, 50);
+                this.setupEventListeners();
                 this.buildNeuralNetworks();
-                this.startAnimation();
                 setTimeout(() => this.requestMicrophone(), 500);
-            }
-
-            setupCanvas() {
-                const rect = this.canvas.getBoundingClientRect();
-                // Fallback for 0 width/height
-                const width = rect.width || 800;
-                const height = rect.height || 500;
-                this.canvas.width = width * window.devicePixelRatio;
-                this.canvas.height = height * window.devicePixelRatio;
-                this.ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform before scaling
-                this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-                this.width = width;
-                this.height = height;
             }
 
             setupEventListeners() {
@@ -204,7 +175,6 @@
                     btn.onclick = () => this.generateSound(btn.dataset.sound);
                     btn.ontouchstart = () => this.generateSound(btn.dataset.sound);
                 });
-                window.addEventListener('resize', () => this.setupCanvas());
             }
 
             buildNeuralNetworks() {
@@ -212,10 +182,8 @@
                     this.nn.cnn = new SimpleCNN(32, 32);
                     this.nn.rnn = new SimpleRNN(64, 16);
                     this.nn.transformer = new SimpleTransformer(64, 4, 16);
-                    this.log('Neural networks built successfully.');
-                    document.getElementById('status').textContent = '🧠 Neural networks ready. Requesting microphone...';
+                    document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
                 } catch (error) {
-                    this.log('Neural network build failed: ' + error.message);
                     document.getElementById('status').textContent = '❌ Critical error building neural networks.';
                 }
             }
@@ -224,10 +192,8 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(track => track.stop());
-                    this.log('Microphone permission granted.');
-                    document.getElementById('status').textContent = '✅ Ready! Click Start Analysis to begin.';
+                    document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
                 } catch (error) {
-                    this.log('Microphone access denied: ' + error.message);
                     document.getElementById('status').textContent = '🎤 Mic denied. Sound generation still available.';
                 }
             }
@@ -240,7 +206,6 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    // Resume context if suspended
                     if (this.audioContext.state === 'suspended') {
                         await this.audioContext.resume();
                     }
@@ -252,101 +217,34 @@
                     this.isRecording = true;
                     document.getElementById('startBtn').textContent = 'Stop Analysis';
                     document.getElementById('startBtn').classList.add('active');
-                    document.getElementById('status').textContent = '🔥 Neural analysis running...';
-                    this.log('Neural analysis started.');
+                    document.getElementById('status').textContent = 'Listening and classifying...';
+                    this.startClassificationLoop();
                 } catch (error) {
-                    this.log('Recording failed: ' + error.message);
                     document.getElementById('status').textContent = '❌ Mic access required to start analysis.';
                 }
             }
 
             stopRecording() {
                 if (this.audioContext) {
-                    this.audioContext.close().catch(e => this.log("Error closing context: " + e));
+                    this.audioContext.close().catch(() => {});
                 }
                 this.isRecording = false;
                 this.audioBuffer = null;
                 document.getElementById('startBtn').textContent = 'Start Analysis';
                 document.getElementById('startBtn').classList.remove('active');
-                document.getElementById('status').textContent = '✅ Ready! Click Start Analysis to begin.';
-                this.log('Analysis stopped.');
+                document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
             }
 
-            startAnimation() {
-                const animate = () => {
-                    this.clearCanvas();
-                    this.drawInterface();
-                    if (this.isRecording && this.audioBuffer) {
-                        this.analyser.getByteFrequencyData(this.audioBuffer);
-                        this.updateSpectrogramData();
-                        this.runNeuralNetworks();
-                        this.updateRecommendations();
-                    }
-                    this.drawSpectrogram();
-                    this.drawWaveform();
-                    this.drawPredictions();
-                    this.drawNeuralNetworkVisualization();
-                    this.animationId = requestAnimationFrame(animate);
+            startClassificationLoop() {
+                const classify = () => {
+                    if (!this.isRecording || !this.audioBuffer) return;
+                    this.analyser.getByteFrequencyData(this.audioBuffer);
+                    this.runNeuralNetworks();
+                    this.updateRecommendations();
+                    this.displayResults();
+                    requestAnimationFrame(classify);
                 };
-                animate();
-            }
-
-            clearCanvas() {
-                this.ctx.fillStyle = '#0a0a0a';
-                this.ctx.fillRect(0, 0, this.width, this.height);
-            }
-
-            drawInterface() {
-                this.ctx.strokeStyle = '#00ff88';
-                this.ctx.lineWidth = 1;
-                this.drawText('Real-time Spectrogram (CNN Input)', 25, 15, '#00ff88', '12px');
-                this.ctx.strokeRect(20, 20, this.width - 40, this.height * 0.3);
-                this.drawText('Audio Waveform (RNN/Transformer Input)', 25, this.height * 0.3 + 35, '#00ff88', '12px');
-                this.ctx.strokeRect(20, this.height * 0.3 + 40, this.width - 40, this.height * 0.15);
-                this.drawText('Neural Network Predictions', 25, this.height * 0.5 + 55, '#00ff88', '12px');
-                this.ctx.strokeRect(20, this.height * 0.5 + 60, this.width / 2 - 30, this.height * 0.3);
-                this.drawText('Neural Network Activity', this.width / 2 + 15, this.height * 0.5 + 55, '#00ff88', '12px');
-                this.ctx.strokeRect(this.width / 2 + 10, this.height * 0.5 + 60, this.width / 2 - 30, this.height * 0.3);
-            }
-
-            updateSpectrogramData() {
-                if (!this.audioBuffer) return;
-                const spectrum = Array.from(this.audioBuffer.slice(0, 64));
-                this.spectrogramData.push(spectrum);
-                if (this.spectrogramData.length > 100) {
-                    this.spectrogramData.shift();
-                }
-            }
-
-            drawSpectrogram() {
-                const area = { x: 25, y: 25, w: this.width - 50, h: this.height * 0.3 - 10 };
-                if (this.spectrogramData.length === 0) return;
-                const timeStep = area.w / this.spectrogramData.length;
-                const freqStep = area.h / 64;
-                for (let t = 0; t < this.spectrogramData.length; t++) {
-                    for (let f = 0; f < this.spectrogramData[t].length; f++) {
-                        const intensity = this.spectrogramData[t][f] / 255;
-                        this.ctx.fillStyle = `hsl(200, 100%, ${intensity * 100}%)`;
-                        this.ctx.fillRect(area.x + t * timeStep, area.y + area.h - (f + 1) * freqStep, timeStep + 1, freqStep + 1);
-                    }
-                }
-            }
-
-            drawWaveform() {
-                const area = { x: 25, y: this.height * 0.3 + 45, w: this.width - 50, h: this.height * 0.15 - 10 };
-                const centerY = area.y + area.h / 2;
-                this.ctx.strokeStyle = '#00ff88';
-                this.ctx.lineWidth = 2;
-                this.ctx.beginPath();
-                if (!this.audioBuffer) { this.ctx.moveTo(area.x, centerY); this.ctx.lineTo(area.x + area.w, centerY); }
-                else {
-                    for (let i = 0; i < this.audioBuffer.length; i++) {
-                        const x = area.x + (i / this.audioBuffer.length) * area.w;
-                        const y = centerY + ((this.audioBuffer[i] - 128) / 128) * (area.h / 2);
-                        i === 0 ? this.ctx.moveTo(x, y) : this.ctx.lineTo(x, y);
-                    }
-                }
-                this.ctx.stroke();
+                classify();
             }
 
             runNeuralNetworks() {
@@ -360,48 +258,6 @@
                     this.predictions[i] = (cnnOut[i] * 0.4 + rnnOut[i] * 0.3 + transformerOut[i] * 0.3);
                 }
                 this.predictions = this.softmax(this.predictions);
-            }
-
-            drawPredictions() {
-                const area = { x: 25, y: this.height * 0.5 + 65, w: this.width / 2 - 35, h: this.height * 0.3 - 10 };
-                const labels = ['🚗 Traffic', '💬 Convo', '🔨 Constr', '🤫 Quiet'];
-                const colors = ['#ff4444', '#44ff44', '#44aaff', '#ffff44'];
-                const barHeight = (area.h / 4) - 8;
-                for (let i = 0; i < 4; i++) {
-                    const y = area.y + i * (barHeight + 8);
-                    const confidence = this.predictions[i];
-                    const barWidth = confidence * (area.w - 90);
-                    this.ctx.fillStyle = '#333';
-                    this.ctx.fillRect(area.x + 70, y, area.w - 90, barHeight);
-                    this.ctx.fillStyle = colors[i];
-                    this.ctx.fillRect(area.x + 70, y, barWidth, barHeight);
-                    this.drawText(labels[i], area.x, y + barHeight / 2 + 4, '#00ff88', '11px');
-                    this.drawText(Math.round(confidence * 100) + '%', area.x + area.w - 15, y + barHeight / 2 + 4, '#00ff88', '11px');
-                }
-            }
-
-            drawNeuralNetworkVisualization() {
-                const area = { x: this.width / 2 + 15, y: this.height * 0.5 + 65, w: this.width / 2 - 35, h: this.height * 0.3 - 10 };
-                const layers = [{ nodes: 3, x: area.x + 20 }, { nodes: 5, x: area.x + area.w / 3 }, { nodes: 4, x: area.x + 2 * area.w / 3 }, { nodes: 4, x: area.x + area.w - 20 }];
-                this.ctx.strokeStyle = 'rgba(0, 255, 136, 0.3)';
-                this.ctx.lineWidth = 1;
-                for (let l = 0; l < layers.length - 1; l++) {
-                    for (let i = 0; i < layers[l].nodes; i++) {
-                        for (let j = 0; j < layers[l + 1].nodes; j++) {
-                            const y1 = area.y + (i + 1) * area.h / (layers[l].nodes + 1);
-                            const y2 = area.y + (j + 1) * area.h / (layers[l + 1].nodes + 1);
-                            this.ctx.beginPath(); this.ctx.moveTo(layers[l].x, y1); this.ctx.lineTo(layers[l + 1].x, y2); this.ctx.stroke();
-                        }
-                    }
-                }
-                layers.forEach((layer) => {
-                    for (let i = 0; i < layer.nodes; i++) {
-                        const y = area.y + (i + 1) * area.h / (layer.nodes + 1);
-                        const activity = this.isRecording ? Math.random() : 0.2;
-                        this.ctx.fillStyle = `rgba(0, 255, 136, ${0.2 + activity * 0.8})`;
-                        this.ctx.beginPath(); this.ctx.arc(layer.x, y, 5, 0, Math.PI * 2); this.ctx.fill();
-                    }
-                });
             }
 
             updateRecommendations() {
@@ -421,35 +277,35 @@
                 });
             }
 
+            displayResults() {
+                const labels = ['Traffic', 'Conversation', 'Construction', 'Quiet'];
+                const dominant = this.predictions.indexOf(Math.max(...this.predictions));
+                const confidence = Math.round(this.predictions[dominant] * 100);
+                document.getElementById('result').textContent = `Detected: ${labels[dominant]} (${confidence}%)`;
+                document.getElementById('recommend').textContent = `Recommended: ${this.recommendations.map(r => this.capitalize(r)).join(', ')}`;
+            }
+
             generateSound(type) {
                 this.stopAllAudio();
-                // Map 'white' to 'whitenoise' for the new file name
                 const audioId = type === 'white' ? 'whitenoise' : type;
                 const audio = document.getElementById(`audio-${audioId}`);
                 const soundButton = document.querySelector(`[data-sound=\"${type}\"]`);
                 if (audio) {
                     const playPromise = audio.play();
                     if (playPromise !== undefined) {
-                        playPromise.catch(e => {
-                            this.log(`Audio play failed: ${e.message}`);
-                        });
+                        playPromise.catch(() => {});
                     }
                     soundButton.classList.add('playing');
-                    this.log(`Playing ${type} sound from file.`);
                     const durationInput = document.getElementById('timerInput');
                     const duration = parseFloat(durationInput.value);
                     if (!isNaN(duration) && duration > 0) {
-                        this.log(`Sound will stop in ${duration} seconds.`);
                         this.activeTimer = setTimeout(() => {
-                            this.log(`${type} sound timer ended.`);
                             audio.pause();
                             audio.currentTime = 0;
                             soundButton.classList.remove('playing');
                             this.activeTimer = null;
                         }, duration * 1000);
                     }
-                } else {
-                    this.log(`Audio file for ${type} not found.`);
                 }
             }
 
@@ -457,7 +313,6 @@
                 if (this.activeTimer) {
                     clearTimeout(this.activeTimer);
                     this.activeTimer = null;
-                    this.log('Active sound timer cancelled.');
                 }
                 document.querySelectorAll('audio').forEach(audio => {
                     audio.pause();
@@ -466,7 +321,6 @@
                 document.querySelectorAll('.sound-btn').forEach(btn => {
                     btn.classList.remove('playing');
                 });
-                this.log('All audio stopped.');
             }
 
             createSpectrumInput() {
@@ -494,15 +348,13 @@
             softmax(arr) {
                 const max = Math.max(...arr);
                 const exp = arr.map(x => Math.exp(x - max));
-                const sum = exp.reduce((a, b) => a + b);
+                const sum = exp.reduce((a, b) => a + b, 0);
                 return exp.map(x => x / sum);
             }
 
-            drawText(text, x, y, color = '#00ff88', font = '12px Courier New') {
-                this.ctx.fillStyle = color; this.ctx.font = font; this.ctx.fillText(text, x, y);
+            capitalize(str) {
+                return str.charAt(0).toUpperCase() + str.slice(1);
             }
-
-            log(message) { console.log(`[${new Date().toLocaleTimeString()}] SoundMask AI: ${message}`); }
         }
 
         // --- Simple neural network stubs (unchanged) ---
