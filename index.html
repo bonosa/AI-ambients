@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>SoundMask AI with YAMNet</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SoundMask AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/yamnet"></script>
     <style>
         body {
             font-family: 'Segoe UI', 'Courier New', monospace;
@@ -120,9 +122,9 @@
     <div class="container">
         <div class="header">
             <h1>🎧 SoundMask AI</h1>
-            <p>Audio Classifier</p>
+            <p>Minimal Audio Classifier (YAMNet powered)</p>
         </div>
-        <div class="status" id="status">Initializing neural networks...</div>
+        <div class="status" id="status">Loading YAMNet model...</div>
         <div class="result" id="result"></div>
         <div class="recommend" id="recommend"></div>
         <div class="controls">
@@ -142,308 +144,131 @@
         </div>
     </div>
 
-    <audio id="audio-whitenoise" src="whitenoise.wav" loop></audio>
-    <audio id="audio-rain" src="rain.wav" loop></audio>
-    <audio id="audio-ocean" src="ocean.wav" loop></audio>
-    <audio id="audio-forest" src="forest.wav" loop></audio>
-    <audio id="audio-cafe" src="cafe.wav" loop></audio>
+    <!-- Use MP3 files for ambient sounds -->
+    <audio id="audio-whitenoise" src="whitenoise.mp3" loop></audio>
+    <audio id="audio-rain" src="rain.mp3" loop></audio>
+    <audio id="audio-ocean" src="ocean.mp3" loop></audio>
+    <audio id="audio-forest" src="forest.mp3" loop></audio>
+    <audio id="audio-cafe" src="cafe.mp3" loop></audio>
 
     <script>
-        class SoundMaskAI {
-            constructor() {
-                this.isRecording = false;
-                this.audioContext = null;
-                this.analyser = null;
-                this.audioBuffer = null;
-                this.nn = {};
-                this.predictions = [0.25, 0.25, 0.25, 0.25];
-                this.recommendations = [];
-                this.activeTimer = null;
-                this.init();
-            }
+    let yamnetModel, audioContext, micStream, analyser, running = false;
+    let bufferData = [];
+    const SAMPLE_RATE = 16000; // YAMNet expects 16kHz mono
 
-            async init() {
-                this.setupEventListeners();
-                this.buildNeuralNetworks();
-                setTimeout(() => this.requestMicrophone(), 500);
-            }
+    async function loadYamnet() {
+        document.getElementById('status').textContent = 'Loading YAMNet model...';
+        yamnetModel = await yamnet.load();
+        document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
+    }
 
-            setupEventListeners() {
-                document.getElementById('startBtn').onclick = () => this.toggleRecording();
-                document.getElementById('stopAudioBtn').onclick = () => this.stopAllAudio();
-                document.querySelectorAll('.sound-btn').forEach(btn => {
-                    btn.onclick = () => this.generateSound(btn.dataset.sound);
-                    btn.ontouchstart = () => this.generateSound(btn.dataset.sound);
-                });
-            }
+    async function startYamnetClassification() {
+        if (!yamnetModel) return;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: SAMPLE_RATE});
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioContext.createMediaStreamSource(micStream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        running = true;
+        bufferData = [];
+        classifyLoop();
+    }
 
-            buildNeuralNetworks() {
-                try {
-                    this.nn.cnn = new SimpleCNN(32, 32);
-                    this.nn.rnn = new SimpleRNN(64, 16);
-                    this.nn.transformer = new SimpleTransformer(64, 4, 16);
-                    document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
-                } catch (error) {
-                    document.getElementById('status').textContent = '❌ Critical error building neural networks.';
-                }
-            }
+    function stopYamnetClassification() {
+        running = false;
+        if (audioContext) audioContext.close();
+        if (micStream) micStream.getTracks().forEach(track => track.stop());
+        document.getElementById('status').textContent = 'Stopped.';
+    }
 
-            async requestMicrophone() {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop());
-                    document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
-                } catch (error) {
-                    document.getElementById('status').textContent = '🎤 Mic denied. Sound generation still available.';
-                }
-            }
+    async function classifyLoop() {
+        if (!running) return;
+        let tempBuffer = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(tempBuffer);
+        bufferData.push(...tempBuffer);
+        // YAMNet expects at least 0.975s of audio (15600 samples at 16kHz)
+        if (bufferData.length >= 15600) {
+            const inputTensor = tf.tensor(bufferData.slice(0, 15600));
+            const scores = await yamnetModel.predict(inputTensor);
+            const topK = await yamnetModel.getTopKClasses(scores, 3);
+            document.getElementById('result').textContent =
+                `Detected: ${topK.map(c => `${c.className} (${Math.round(c.score*100)}%)`).join(', ')}`;
+            // Example: recommend based on top class
+            const recs = {
+                'Speech': ['white', 'cafe', 'rain'],
+                'Music': ['white', 'ocean', 'forest'],
+                'Vehicle': ['rain', 'ocean', 'forest'],
+                'Silence': ['forest', 'rain', 'cafe']
+            };
+            let mainClass = topK[0].className;
+            let recommend = recs['Speech'];
+            if (mainClass.includes('Music')) recommend = recs['Music'];
+            else if (mainClass.includes('Vehicle')) recommend = recs['Vehicle'];
+            else if (mainClass.includes('Silence') || mainClass.includes('Quiet')) recommend = recs['Silence'];
+            document.getElementById('recommend').textContent = `Recommended: ${recommend.map(r => r.charAt(0).toUpperCase()+r.slice(1)).join(', ')}`;
+            document.querySelectorAll('.sound-btn').forEach(btn => {
+                btn.classList.remove('recommended');
+                if (recommend.includes(btn.dataset.sound)) btn.classList.add('recommended');
+            });
+            bufferData = bufferData.slice(15600); // keep leftover for next window
+        }
+        setTimeout(classifyLoop, 250);
+    }
 
-            async toggleRecording() {
-                this.isRecording ? this.stopRecording() : await this.startRecording();
+    function generateSound(type) {
+        stopAllAudio();
+        const audioId = type === 'white' ? 'whitenoise' : type;
+        const audio = document.getElementById(`audio-${audioId}`);
+        const soundButton = document.querySelector(`[data-sound=\"${type}\"]`);
+        if (audio) {
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(() => {});
             }
-
-            async startRecording() {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    if (this.audioContext.state === 'suspended') {
-                        await this.audioContext.resume();
-                    }
-                    const source = this.audioContext.createMediaStreamSource(stream);
-                    this.analyser = this.audioContext.createAnalyser();
-                    this.analyser.fftSize = 512;
-                    source.connect(this.analyser);
-                    this.audioBuffer = new Uint8Array(this.analyser.frequencyBinCount);
-                    this.isRecording = true;
-                    document.getElementById('startBtn').textContent = 'Stop Analysis';
-                    document.getElementById('startBtn').classList.add('active');
-                    document.getElementById('status').textContent = 'Listening and classifying...';
-                    this.startClassificationLoop();
-                } catch (error) {
-                    document.getElementById('status').textContent = '❌ Mic access required to start analysis.';
-                }
-            }
-
-            stopRecording() {
-                if (this.audioContext) {
-                    this.audioContext.close().catch(() => {});
-                }
-                this.isRecording = false;
-                this.audioBuffer = null;
-                document.getElementById('startBtn').textContent = 'Start Analysis';
-                document.getElementById('startBtn').classList.remove('active');
-                document.getElementById('status').textContent = 'Ready! Click Start Analysis to begin.';
-            }
-
-            startClassificationLoop() {
-                const classify = () => {
-                    if (!this.isRecording || !this.audioBuffer) return;
-                    this.analyser.getByteFrequencyData(this.audioBuffer);
-                    this.runNeuralNetworks();
-                    this.updateRecommendations();
-                    this.displayResults();
-                    requestAnimationFrame(classify);
-                };
-                classify();
-            }
-
-            runNeuralNetworks() {
-                if (!this.audioBuffer) return;
-                const spectrum = this.createSpectrumInput();
-                const sequence = this.createSequenceInput();
-                const cnnOut = this.nn.cnn.predict(spectrum);
-                const rnnOut = this.nn.rnn.predict(sequence);
-                const transformerOut = this.nn.transformer.predict(sequence);
-                for (let i = 0; i < 4; i++) {
-                    this.predictions[i] = (cnnOut[i] * 0.4 + rnnOut[i] * 0.3 + transformerOut[i] * 0.3);
-                }
-                this.predictions = this.softmax(this.predictions);
-            }
-
-            updateRecommendations() {
-                const recs = [
-                    ['white', 'ocean', 'forest'],
-                    ['white', 'cafe', 'rain'],
-                    ['rain', 'ocean', 'forest'],
-                    ['forest', 'rain', 'cafe']
-                ];
-                const dominant = this.predictions.indexOf(Math.max(...this.predictions));
-                this.recommendations = recs[dominant];
-                document.querySelectorAll('.sound-btn').forEach(btn => {
-                    btn.classList.remove('recommended');
-                    if (this.recommendations.includes(btn.dataset.sound)) {
-                        btn.classList.add('recommended');
-                    }
-                });
-            }
-
-            displayResults() {
-                const labels = ['Traffic', 'Conversation', 'Construction', 'Quiet'];
-                const dominant = this.predictions.indexOf(Math.max(...this.predictions));
-                const confidence = Math.round(this.predictions[dominant] * 100);
-                document.getElementById('result').textContent = `Detected: ${labels[dominant]} (${confidence}%)`;
-                document.getElementById('recommend').textContent = `Recommended: ${this.recommendations.map(r => this.capitalize(r)).join(', ')}`;
-            }
-
-            generateSound(type) {
-                this.stopAllAudio();
-                const audioId = type === 'white' ? 'whitenoise' : type;
-                const audio = document.getElementById(`audio-${audioId}`);
-                const soundButton = document.querySelector(`[data-sound=\"${type}\"]`);
-                if (audio) {
-                    const playPromise = audio.play();
-                    if (playPromise !== undefined) {
-                        playPromise.catch(() => {});
-                    }
-                    soundButton.classList.add('playing');
-                    const durationInput = document.getElementById('timerInput');
-                    const duration = parseFloat(durationInput.value);
-                    if (!isNaN(duration) && duration > 0) {
-                        this.activeTimer = setTimeout(() => {
-                            audio.pause();
-                            audio.currentTime = 0;
-                            soundButton.classList.remove('playing');
-                            this.activeTimer = null;
-                        }, duration * 1000);
-                    }
-                }
-            }
-
-            stopAllAudio() {
-                if (this.activeTimer) {
-                    clearTimeout(this.activeTimer);
-                    this.activeTimer = null;
-                }
-                document.querySelectorAll('audio').forEach(audio => {
+            soundButton.classList.add('playing');
+            const durationInput = document.getElementById('timerInput');
+            const duration = parseFloat(durationInput.value);
+            if (!isNaN(duration) && duration > 0) {
+                window._activeTimer = setTimeout(() => {
                     audio.pause();
                     audio.currentTime = 0;
-                });
-                document.querySelectorAll('.sound-btn').forEach(btn => {
-                    btn.classList.remove('playing');
-                });
-            }
-
-            createSpectrumInput() {
-                const spectrum = [];
-                for (let i = 0; i < 32; i++) {
-                    const row = [];
-                    for (let j = 0; j < 32; j++) {
-                        const idx = Math.floor((i * 32 + j) / (32 * 32) * this.audioBuffer.length);
-                        row.push((this.audioBuffer[idx] || 0) / 255);
-                    }
-                    spectrum.push(row);
-                }
-                return spectrum;
-            }
-
-            createSequenceInput() {
-                const seq = [];
-                for (let i = 0; i < 64; i++) {
-                    const idx = Math.floor((i / 64) * this.audioBuffer.length);
-                    seq.push((this.audioBuffer[idx] || 0) / 255);
-                }
-                return seq;
-            }
-
-            softmax(arr) {
-                const max = Math.max(...arr);
-                const exp = arr.map(x => Math.exp(x - max));
-                const sum = exp.reduce((a, b) => a + b, 0);
-                return exp.map(x => x / sum);
-            }
-
-            capitalize(str) {
-                return str.charAt(0).toUpperCase() + str.slice(1);
+                    soundButton.classList.remove('playing');
+                    window._activeTimer = null;
+                }, duration * 1000);
             }
         }
+    }
 
-        // --- Simple neural network stubs (unchanged) ---
-        class SimpleCNN {
-            constructor(inputW, inputH) {
-                this.kernel = [-1, 2, -1];
-                this.inputW = inputW;
-                this.inputH = inputH;
-            }
-            predict(spectrogram) {
-                let convolved = [];
-                for (let r = 0; r < this.inputH; r++) {
-                    let row = [];
-                    for (let c = 1; c < this.inputW - 1; c++) {
-                        let sum = spectrogram[r][c-1] * this.kernel[0] + spectrogram[r][c] * this.kernel[1] + spectrogram[r][c+1] * this.kernel[2];
-                        row.push(Math.tanh(sum));
-                    }
-                    convolved.push(row);
-                }
-                let pooled = [];
-                for (let r = 0; r < convolved.length; r++) {
-                    for (let c = 0; c < convolved[r].length - 1; c += 2) {
-                        pooled.push(Math.max(convolved[r][c], convolved[r][c+1]));
-                    }
-                }
-                const sum = pooled.reduce((a, b) => a + Math.abs(b), 0);
-                const avg = sum / (pooled.length || 1);
-                return [avg * 1.5, avg * 0.8, avg * 0.5, avg * 1.1];
-            }
+    function stopAllAudio() {
+        if (window._activeTimer) {
+            clearTimeout(window._activeTimer);
+            window._activeTimer = null;
         }
+        document.querySelectorAll('audio').forEach(audio => {
+            audio.pause();
+            audio.currentTime = 0;
+        });
+        document.querySelectorAll('.sound-btn').forEach(btn => {
+            btn.classList.remove('playing');
+        });
+    }
 
-        class SimpleRNN {
-            constructor(inputSize, hiddenSize) {
-                this.hiddenSize = hiddenSize;
-                this.wh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5);
-                this.hh = Array.from({ length: hiddenSize }, () => Math.random() - 0.5);
-                this.hidden = Array.from({ length: hiddenSize }, () => 0);
-            }
-            predict(sequence) {
-                this.hidden.fill(0);
-                for (const input of sequence) {
-                    const newHidden = Array(this.hiddenSize).fill(0);
-                    for (let i = 0; i < this.hiddenSize; i++) {
-                        newHidden[i] = Math.tanh(input * this.wh[i] + this.hidden[i] * this.hh[i]);
-                    }
-                    this.hidden = newHidden;
-                }
-                const sum = this.hidden.reduce((a, b) => a + b, 0);
-                return [ Math.abs(sum * 0.1), Math.abs(sum * 0.15), Math.abs(sum * 0.05), Math.abs(sum * 0.12) ];
-            }
-        }
-
-        class SimpleTransformer {
-            constructor(inputDim, numHeads, headSize) {
-                this.inputDim = inputDim;
-                this.numHeads = numHeads;
-                this.headSize = headSize;
-                this.Wq = Array.from({length: numHeads}, () => Array.from({length: headSize}, () => Math.random() - 0.5));
-                this.Wk = Array.from({length: numHeads}, () => Array.from({length: headSize}, () => Math.random() - 0.5));
-                this.Wv = Array.from({length: numHeads}, () => Array.from({length: headSize}, () => Math.random() - 0.5));
-            }
-            predict(sequence) {
-                let embedded = sequence.map((val, i) => val + Math.sin(i / 10));
-                let attendedOutputs = [];
-                for(let h = 0; h < this.numHeads; h++) {
-                    let q = embedded.map(val => val * this.Wq[h][0]);
-                    let k = embedded.map(val => val * this.Wk[h][0]);
-                    let v = embedded.map(val => val * this.Wv[h][0]);
-                    let attentionScores = q.map((qi, i) => k.map((kj, j) => qi * kj));
-                    let attentionWeights = attentionScores.map(row => this.softmax(row));
-                    let headOutput = attentionWeights.map((weights, i) => {
-                        return v.reduce((sum, vj, j) => sum + vj * weights[j], 0);
-                    });
-                    attendedOutputs.push(...headOutput);
-                }
-                const sum = attendedOutputs.reduce((a, b) => a + Math.abs(b), 0);
-                const avg = sum / (attendedOutputs.length || 1);
-                return [avg * 1.1, avg * 1.3, avg * 0.9, avg * 0.7];
-            }
-            softmax(arr) {
-                if (!arr || arr.length === 0) return [];
-                const max = Math.max(...arr);
-                const exp = arr.map(x => Math.exp(x - max));
-                const sum = exp.reduce((a, b) => a + b, 0);
-                return exp.map(x => x / (sum || 1));
-            }
-        }
-
-        window.onload = () => new SoundMaskAI();
+    window.onload = () => {
+        loadYamnet();
+        document.getElementById('startBtn').onclick = () => {
+            document.getElementById('status').textContent = 'Listening and classifying...';
+            startYamnetClassification();
+        };
+        document.getElementById('stopAudioBtn').onclick = () => {
+            stopYamnetClassification();
+            stopAllAudio();
+        };
+        document.querySelectorAll('.sound-btn').forEach(btn => {
+            btn.onclick = () => generateSound(btn.dataset.sound);
+            btn.ontouchstart = () => generateSound(btn.dataset.sound);
+        });
+    };
     </script>
 </body>
 </html>
